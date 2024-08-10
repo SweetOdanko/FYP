@@ -14,7 +14,7 @@ import zipfile
 
 app = Flask(__name__, template_folder='app/templates', static_folder='app/static')
 
-
+# Load the Siamese model
 model = SiameseNetwork()
 checkpoint = torch.load('best_model.pt', map_location=torch.device('cpu'))
 model_state_dict = checkpoint['model_state'] if 'model_state' in checkpoint else checkpoint
@@ -40,11 +40,7 @@ def results():
 
 @app.route('/api/upload', methods=['POST'])
 def api_upload_image():
-    db_url = request.form.get('db_url')
-    if not db_url:
-        return jsonify({'success': False, 'error': 'No database URL provided'}), 400
-    
-    db = get_db_connection(db_url)
+    db = get_db_connection()
     fs = gridfs.GridFS(db)
     collection = db['image_features']
     
@@ -69,7 +65,7 @@ def api_upload_image():
             file_id = fs.put(image_bytes, filename=file.filename, content_type='image/png')
             print(f"Image {file.filename} saved to GridFS with ID: {file_id}")
             
-            image_url = f"/api/get_image/{file_id}?db_url={db_url}" 
+            image_url = f"/api/get_image/{file_id}" 
             image = preprocess_image(image)
             features = extract_features(image)
 
@@ -112,7 +108,7 @@ def find_similar_images(features, collection):
     
     similarity_threshold = 0.97
 
-# Sort the similarities in descending order
+    # Sort the similarities in descending order
     similarities = sorted(similarities, key=lambda x: x[1], reverse=True)
 
     # Check if the first image meets the threshold
@@ -126,14 +122,9 @@ def find_similar_images(features, collection):
 
     return similar_images
 
-
 @app.route('/api/get_image/<image_id>', methods=['GET'])
 def api_get_image(image_id):
-    db_url = request.args.get('db_url')
-    if not db_url:
-        return "No database URL provided", 400
-    
-    db = get_db_connection(db_url)
+    db = get_db_connection()
     fs = gridfs.GridFS(db)
     
     try:
@@ -152,11 +143,7 @@ def api_get_image(image_id):
 
 @app.route('/api/get_similar_images', methods=['GET'])
 def api_get_similar_images():
-    db_url = request.args.get('db_url')
-    if not db_url:
-        return jsonify({'success': False, 'error': 'No database URL provided'}), 400
-    
-    db = get_db_connection(db_url)
+    db = get_db_connection()
     fs = gridfs.GridFS(db)
     collection = db['image_features']
     
@@ -189,9 +176,9 @@ import hashlib
 
 @app.route('/api/upload_zip', methods=['POST'])
 def upload_zip():
-    db_url = request.form.get('db_url')
-    if not db_url:
-        return jsonify({'success': False, 'error': 'No database URL provided'}), 400
+    db = get_db_connection()
+    fs = gridfs.GridFS(db)
+    collection = db['image_features']
 
     if 'file' not in request.files:
         return jsonify({'success': False, 'error': 'No file part'}), 400
@@ -204,27 +191,20 @@ def upload_zip():
     if not (file.mimetype == 'application/zip'):
         return jsonify({'success': False, 'error': 'Not a zip file'}), 400
 
-    db = get_db_connection(db_url)
-    fs = gridfs.GridFS(db)
-    collection = db['image_features']
-
     try:
         with zipfile.ZipFile(file, 'r') as zip_ref:
             results = []
             for zip_info in zip_ref.infolist():
                 with zip_ref.open(zip_info) as image_file:
                     try:
-                       
                         image_content = image_file.read()
                         image_hash = hashlib.md5(image_content).hexdigest()
 
-                        
                         existing_file = collection.find_one({'image_hash': image_hash})
                         if existing_file:
                             print(f"Skipping {zip_info.filename} as a similar image already exists in the database")
                             continue
 
-                        
                         image_file.seek(0)  
                         image = Image.open(image_file).convert('RGB')
                         image_tensor = preprocess_image(image)
